@@ -1,3 +1,6 @@
+import 'dart:ui';
+
+import 'models.dart';
 import 'translate_hub.dart';
 
 extension StringTranslate on String {
@@ -7,4 +10,8 @@ extension StringTranslate on String {
     
     return TranslateHub.shared.translation?.translationsByCode[currentCode]?[this];
   }
+}
+
+extension THLanguageItemTranslate on THLanguageItem {
+  TextDirection get textDirection => direction == 'ltr' ? TextDirection.ltr : TextDirection.rtl;
 }
