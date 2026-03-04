@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,11 +10,13 @@ class TranslateHub {
   static final TranslateHub shared = TranslateHub._internal();
   TranslateHub._internal();
 
-  static const String _host = "us-central1-translationhub-d60f6.cloudfunctions.net";
+  static String _host = "us-central1-translationhub-d60f6.cloudfunctions.net";
+  static set host(String value) => _host = value;
   static const String _storageKey = "THub.Translation.Storage";
   static const String _lastSyncKey = "THub.Translation.LastSync";
   static const String _defaultFallbackFileName = "translations";
-  
+  static const String _languageKey = "THub.Translation.Language";
+
   String _currentLangCode = "en";
   String? _fallbackFileName = 'translations';
   Translation? _translation;
@@ -26,6 +29,9 @@ class TranslateHub {
 
   void pickLanguage(String code) {
     _currentLangCode = code;
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setString(_languageKey, code);
+    });
   }
 
   Future<void> _extractTranslation() async {
@@ -66,13 +72,14 @@ class TranslateHub {
     if (fallbackFile != null) {
       _fallbackFileName = fallbackFile;
     }
-    
+
     // If offline mode, only use JSON file
     if (offline) {
       _translation = await _loadFallbackTranslation();
+      await _resolveLanguage();
       return;
     }
-    
+
     try {
       final prefs = await SharedPreferences.getInstance();
       
@@ -81,10 +88,12 @@ class TranslateHub {
       const threeDaysInMillis = 5 * 1000;
       final currentTime = DateTime.now().millisecondsSinceEpoch;
       
-      if (lastSync > 0 && 
+      if (lastSync > 0 &&
           currentTime - lastSync < threeDaysInMillis &&
           prefs.containsKey(_storageKey)) {
-        return await _extractTranslation();
+        await _extractTranslation();
+        await _resolveLanguage();
+        return;
       }
 
       // Fetch from API with enhanced fallback
@@ -95,6 +104,24 @@ class TranslateHub {
       if (_translation == null) {
         _translation = await _loadFallbackTranslation();
       }
+    }
+
+    await _resolveLanguage();
+  }
+
+  Future<void> _resolveLanguage() async {
+    final codes = _translation?.languages.map((l) => l.code).toSet() ?? {};
+
+    // 1. Saved language from SharedPreferences
+    // 2. Device language
+    // 3. English fallback
+    final prefs = await SharedPreferences.getInstance();
+    final savedLang = prefs.getString(_languageKey);
+    if (savedLang != null && codes.contains(savedLang)) {
+      _currentLangCode = savedLang;
+    } else {
+      final deviceLang = PlatformDispatcher.instance.locale.languageCode;
+      _currentLangCode = codes.contains(deviceLang) ? deviceLang : 'en';
     }
   }
 
