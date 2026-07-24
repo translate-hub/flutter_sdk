@@ -1,6 +1,6 @@
 name: translate_hub_handler
-description: "A new Flutter project."
-version: 0.0.1
+description: "Flutter SDK for TranslateHub — fetches published translations directly from Firebase Storage."
+version: 0.1.0
 homepage:
 
 environment:
