@@ -24,16 +24,20 @@ dependencies:
 
 ## Usage
 
-Copy the **SDK URL** for a customer from the TranslateHub dashboard — it embeds
-the download token that guards the file. Treat it like an API key.
+In the TranslateHub dashboard, each customer's API key shows an **owner id** and
+a **token**. Pass those two values to `initialize`; the SDK builds the Storage
+URL for you. Treat the token like an API key and keep it out of public
+repositories.
 
 ```dart
 import 'package:translate_hub_handler/translate_hub_handler.dart';
 
 await TranslateHub.shared.initialize(
-  'https://firebasestorage.googleapis.com/v0/b/<bucket>/o/'
-  'public_translations%2F<ownerId>%2Ftranslations.json?alt=media&token=<token>',
-  fallbackFile: 'translations', // optional: assets/translations.json
+  const TranslateHubConfig(
+    ownerId: 'AbC123...',       // from the dashboard
+    token: '8f3c...-...-...',   // this app's download token
+    fallbackFile: 'translations', // optional: assets/translations.json
+  ),
 );
 
 // Read a value for the resolved language:

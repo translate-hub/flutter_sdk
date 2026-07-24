@@ -6,17 +6,50 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'models.dart';
 
+/// The two values a customer app is given in the TranslateHub dashboard, plus
+/// optional offline behaviour.
+///
+/// [ownerId] and [token] identify one customer's published translations; the
+/// Storage bucket is a fixed property of the TranslateHub deployment and is not
+/// passed here.
+class TranslateHubConfig {
+  /// The TranslateHub account (owner) the translations belong to.
+  final String ownerId;
+
+  /// This app's download token — the credential guarding the file. Treat it
+  /// like an API key and keep it out of public repositories.
+  final String token;
+
+  /// Optional bundled asset (`assets/<fallbackFile>.json`) used in offline mode
+  /// or when the network and cache are both unavailable.
+  final String? fallbackFile;
+
+  /// Skip the network entirely and load only the bundled asset.
+  final bool offline;
+
+  const TranslateHubConfig({
+    required this.ownerId,
+    required this.token,
+    this.fallbackFile,
+    this.offline = false,
+  });
+}
+
 /// Fetches the translations file published for your project.
 ///
 /// The file is served straight from Firebase Storage, so there is no backend in
-/// the request path: [initialize] performs a single HTTP GET on the SDK URL
-/// issued in the TranslateHub dashboard. That URL embeds a download token which
-/// is the only credential guarding the file — treat it like an API key and keep
-/// it out of public repositories. Revoking a customer drops their token, after
+/// the request path: [initialize] builds the file's URL from the [ownerId] and
+/// [token] in [TranslateHubConfig] and performs a single HTTP GET. The token is
+/// the only credential guarding the file; revoking a customer drops it, after
 /// which the URL answers 403 and the SDK falls back to its cache or bundled asset.
 class TranslateHub {
   static final TranslateHub shared = TranslateHub._internal();
   TranslateHub._internal();
+
+  /// Firebase Storage bucket for the TranslateHub deployment. Fixed for every
+  /// customer, so it lives here rather than in the config. If the backend
+  /// project ever moves, update this constant and release a new SDK version.
+  static const String _bucket = "translationhub-d60f6.firebasestorage.app";
 
   static const String _storageKey = "THub.Translation.Storage";
   static const String _lastSyncKey = "THub.Translation.LastSync";
@@ -80,24 +113,29 @@ class TranslateHub {
     }
   }
 
+  /// Build the published file's URL the same way `getDownloadURL` would, from
+  /// the constant [_bucket] and the customer's owner id and token.
+  String _buildUrl(TranslateHubConfig config) {
+    final objectPath =
+        Uri.encodeComponent('public_translations/${config.ownerId}/translations.json');
+    return 'https://firebasestorage.googleapis.com/v0/b/$_bucket/o/'
+        '$objectPath?alt=media&token=${config.token}';
+  }
+
   /// Load the translations, from cache when it is still fresh and from the
   /// network otherwise.
   ///
-  /// [translationsUrl] is the SDK URL copied from the TranslateHub dashboard.
-  /// Pass [offline] to skip the network entirely and use the bundled asset, and
-  /// [fallbackFile] to name that asset (defaults to `assets/translations.json`).
-  Future<void> initialize(
-    String translationsUrl, {
-    String? fallbackFile,
-    bool offline = false,
-  }) async {
+  /// [config] carries the `ownerId` and `token` from the TranslateHub dashboard.
+  /// Set `config.offline` to skip the network and use the bundled asset, and
+  /// `config.fallbackFile` to name that asset (defaults to `assets/translations.json`).
+  Future<void> initialize(TranslateHubConfig config) async {
     // Store fallback configuration
-    if (fallbackFile != null) {
-      _fallbackFileName = fallbackFile;
+    if (config.fallbackFile != null) {
+      _fallbackFileName = config.fallbackFile;
     }
 
     // If offline mode, only use the bundled JSON file
-    if (offline) {
+    if (config.offline) {
       _translation = await _loadFallbackTranslation();
       await _resolveLanguage();
       return;
@@ -119,7 +157,7 @@ class TranslateHub {
       }
 
       // Fetch from Storage with enhanced fallback
-      await _fetchFromUrl(translationsUrl);
+      await _fetchFromUrl(_buildUrl(config));
     } catch (e) {
       // On failure, try cache first, then fallback
       await _extractTranslation();
