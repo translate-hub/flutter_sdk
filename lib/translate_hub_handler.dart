@@ -1,4 +1,4 @@
-library translate_hub_handler;
+library;
 
 export 'models.dart';
 export 'translate_hub.dart';
