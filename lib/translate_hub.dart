@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 import 'dart:ui';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -51,11 +52,16 @@ class TranslateHub {
   /// project ever moves, update this constant and release a new SDK version.
   static const String _bucket = "translationhub-d60f6.firebasestorage.app";
 
-  static const String _storageKey = "THub.Translation.Storage";
-  static const String _lastSyncKey = "THub.Translation.LastSync";
-  static const String _etagKey = "THub.Translation.ETag";
-  static const String _languageKey = "THub.Translation.Language";
-  static const String _defaultFallbackFileName = "translations";
+  static const String _storageKey    = 'THub.Translation.Storage';
+  static const String _lastSyncKey   = 'THub.Translation.LastSync';
+  static const String _etagKey       = 'THub.Translation.ETag';
+  static const String _languageKey   = 'THub.Translation.Language';
+  static const String _mauUserIdKey  = 'THub.MAU.UserId';
+  static const String _mauCheckinKey = 'THub.MAU.Checkin'; // stored as "YYYY-MM"
+  static const String _defaultFallbackFileName = 'translations';
+
+  static const String _trackUrl =
+      'https://us-central1-translationhub-d60f6.cloudfunctions.net/trackActiveUser';
 
   /// How long a cached copy is used before revalidating with the server.
   static const int _cacheLifetimeMillis = 3 * 24 * 60 * 60 * 1000;
@@ -78,6 +84,65 @@ class TranslateHub {
       prefs.setString(_languageKey, code);
     });
   }
+
+  // ---------------------------------------------------------------------------
+  // MAU check-in
+  // ---------------------------------------------------------------------------
+
+  String _currentMonth() {
+    final now = DateTime.now().toUtc();
+    return '${now.year}-${now.month.toString().padLeft(2, '0')}';
+  }
+
+  String _generateUuid() {
+    final rand = Random.secure();
+    final bytes = List<int>.generate(16, (_) => rand.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 10xx
+    final hex =
+        bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+        '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
+        '${hex.substring(20)}';
+  }
+
+  Future<String> _getMauUserId(SharedPreferences prefs) async {
+    final existing = prefs.getString(_mauUserIdKey);
+    if (existing != null) return existing;
+    final id = _generateUuid();
+    await prefs.setString(_mauUserIdKey, id);
+    return id;
+  }
+
+  /// Fire-and-forget: POST to [_trackUrl] at most once per calendar month per
+  /// device. Only commits the stored month on HTTP 200 so a network failure
+  /// retries on the next app launch within the same month.
+  void _checkIn(String token) {
+    unawaited(() async {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final month = _currentMonth();
+        if (prefs.getString(_mauCheckinKey) == month) return;
+
+        final userId = await _getMauUserId(prefs);
+        final response = await http
+            .post(
+              Uri.parse(_trackUrl),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'token': token, 'userId': userId}),
+            )
+            .timeout(const Duration(seconds: 10));
+
+        if (response.statusCode == 200) {
+          await prefs.setString(_mauCheckinKey, month);
+        }
+      } catch (_) {
+        // Silently ignore — retries on the next app launch this month.
+      }
+    }());
+  }
+
+  // ---------------------------------------------------------------------------
 
   Future<void> _extractTranslation() async {
     try {
@@ -153,11 +218,12 @@ class TranslateHub {
           prefs.containsKey(_storageKey)) {
         await _extractTranslation();
         await _resolveLanguage();
+        _checkIn(config.token);
         return;
       }
 
       // Fetch from Storage with enhanced fallback
-      await _fetchFromUrl(_buildUrl(config));
+      await _fetchFromUrl(_buildUrl(config), config.token);
     } catch (e) {
       // On failure, try cache first, then fallback
       await _extractTranslation();
@@ -183,7 +249,7 @@ class TranslateHub {
     }
   }
 
-  Future<void> _fetchFromUrl(String translationsUrl) async {
+  Future<void> _fetchFromUrl(String translationsUrl, String token) async {
     final prefs = await SharedPreferences.getInstance();
     try {
       final headers = <String, String>{'Accept': 'application/json'};
@@ -213,6 +279,7 @@ class TranslateHub {
             if (etag != null) {
               await prefs.setString(_etagKey, etag);
             }
+            _checkIn(token);
           } catch (e) {
             // If decoding fails, keep whatever is cached (don't use fallback).
             await _extractTranslation();
@@ -224,6 +291,7 @@ class TranslateHub {
           await _extractTranslation();
           await prefs.setInt(
               _lastSyncKey, DateTime.now().millisecondsSinceEpoch);
+          _checkIn(token);
           break;
 
         default:
