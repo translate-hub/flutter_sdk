@@ -51,36 +51,31 @@ class Translation {
     final List<THLanguageItem> languages = [];
     final Map<String, Map<String, String>> translationsDict = {};
 
-    // Extract languages
     if (json.containsKey('languages')) {
       final languagesJson = json['languages'] as List<dynamic>;
       for (final languageJson in languagesJson) {
-        final languageItem = THLanguageItem.fromJson(languageJson as Map<String, dynamic>);
-        languages.add(languageItem);
+        languages.add(THLanguageItem.fromJson(languageJson as Map<String, dynamic>));
       }
     }
 
-    // Extract language code dictionaries
     json.forEach((key, value) {
       if (key != 'languages' && value is Map<String, dynamic>) {
         try {
           final translationMap = <String, String>{};
-          value.forEach((translationKey, translationValue) {
-            if (translationValue is String) {
-              translationMap[translationKey] = translationValue;
-            }
+          value.forEach((k, v) {
+            if (v is String) translationMap[k] = v;
           });
           translationsDict[key] = translationMap;
-        } catch (e) {
-          // Skip invalid entries
-        }
+        } catch (_) {}
       }
     });
 
-    return Translation(
-      languages: languages,
-      translationsByCode: translationsDict,
-    );
+    return Translation(languages: languages, translationsByCode: translationsDict);
+  }
+
+  static Translation? tryFromJson(Map<String, dynamic> json) {
+    final t = Translation.fromJson(json);
+    return t.languages.isEmpty ? null : t;
   }
 
   Map<String, dynamic> toJson() {
